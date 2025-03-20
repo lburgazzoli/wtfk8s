@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/google/go-cmp/cmp"
 	"os"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -24,6 +25,7 @@ var (
 	labelSelector string
 	fieldSelector string
 	gvr           schema.GroupVersionResource
+	managedFields bool
 )
 
 func run(cmd *cobra.Command, args []string) error {
@@ -46,13 +48,29 @@ func run(cmd *cobra.Command, args []string) error {
 
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			logrus.WithField("action", "add").Info(obj)
+			if in, ok := obj.(client.Object); ok {
+				fmt.Println("add", "gvk", in.GetObjectKind().GroupVersionKind(), "ns", in.GetNamespace(), "name", in.GetName())
+			}
 		},
 		UpdateFunc: func(oldObj interface{}, newObj interface{}) {
-			logrus.WithField("action", "upd").Info(cmp.Diff(oldObj, newObj))
+			oldIn, ok := oldObj.(client.Object)
+			if !ok {
+				return
+			}
+			newIn, ok := newObj.(client.Object)
+			if !ok {
+				return
+			}
+
+			oldIn.SetManagedFields(nil)
+			newIn.SetManagedFields(nil)
+
+			fmt.Println("upd", "diff", cmp.Diff(oldIn, newIn))
 		},
 		DeleteFunc: func(obj interface{}) {
-			logrus.WithField("action", "del").Info(obj)
+			if in, ok := obj.(client.Object); ok {
+				fmt.Println("del", "gvk", in.GetObjectKind().GroupVersionKind(), "ns", in.GetNamespace(), "name", in.GetName())
+			}
 		},
 	})
 
@@ -60,7 +78,10 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	<-cmd.Context().Done()
+	done := cmd.Context().Done()
+	informer.Run(done)
+
+	<-done
 
 	return nil
 }
@@ -87,6 +108,7 @@ func main() {
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", corev1.NamespaceAll, "")
 	cmd.Flags().StringVarP(&labelSelector, "label-selector", "l", "", "Label selector to filter resources")
 	cmd.Flags().StringVarP(&fieldSelector, "field-selector", "f", "", "Field selector to filter resources")
+	cmd.Flags().BoolVar(&managedFields, "show-managed-fields", true, "Show managed fields")
 
 	cmd.MarkFlagsRequiredTogether("group", "version", "resource")
 
