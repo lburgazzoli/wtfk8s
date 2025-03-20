@@ -1,4 +1,4 @@
-module github.com/ibuildthecloud/wtfk8s
+module github.com/lburgazzoli/wtfk8s
 
 go 1.23
 
