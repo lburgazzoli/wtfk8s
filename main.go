@@ -3,10 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/google/go-cmp/cmp"
-	"k8s.io/client-go/discovery"
-	"k8s.io/client-go/restmapper"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,11 +15,15 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/sirupsen/logrus"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var (
-	kubeConfig string
-	namespace  string
+	kubeConfig    string
+	namespace     string
+	labelSelector string
+	fieldSelector string
+	gvr           schema.GroupVersionResource
 )
 
 func run(cmd *cobra.Command, args []string) error {
@@ -36,35 +37,22 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	disc := discovery.NewDiscoveryClientForConfigOrDie(cfg)
-	groupResources, err := restmapper.GetAPIGroupResources(disc)
-	if err != nil {
-		return err
-	}
+	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(cli, time.Minute, namespace, func(opts *metav1.ListOptions) {
+		opts.LabelSelector = labelSelector
+		opts.FieldSelector = fieldSelector
+	})
 
-	gvr := schema.GroupVersionResource{}
-
-	switch strings.Count(args[0], ".") {
-	case 0:
-		gvr.Resource = args[0]
-	case 1:
-		s := strings.SplitN(args[0], ".", 2)
-		gvr.Resource = s[0]
-		gvr.Group = s[1]
-	default:
-		return fmt.Errorf("unknown group version %q", args[0])
-	}
-
-	for _, groupResource := range groupResources {
-		//
-	}
-
-	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(cli, time.Minute, namespace, nil)
 	informer := factory.ForResource(gvr).Informer()
 
 	_, err = informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			logrus.WithField("action", "add").Info(obj)
+		},
 		UpdateFunc: func(oldObj interface{}, newObj interface{}) {
-			fmt.Printf("%s\n", cmp.Diff(oldObj, newObj))
+			logrus.WithField("action", "upd").Info(cmp.Diff(oldObj, newObj))
+		},
+		DeleteFunc: func(obj interface{}) {
+			logrus.WithField("action", "del").Info(obj)
 		},
 	})
 
@@ -75,12 +63,14 @@ func run(cmd *cobra.Command, args []string) error {
 	<-cmd.Context().Done()
 
 	return nil
-
 }
 
 func main() {
-	// klog.SetOutput(io.)
 	logrus.SetLevel(logrus.InfoLevel)
+	logrus.SetFormatter(&logrus.TextFormatter{
+		DisableColors: true,
+		FullTimestamp: true,
+	})
 
 	cmd := &cobra.Command{
 		Use:          "wtfk8s",
@@ -89,8 +79,16 @@ func main() {
 		RunE:         run,
 	}
 
+	cmd.Flags().StringVarP(&gvr.Group, "group", "g", "", "")
+	cmd.Flags().StringVarP(&gvr.Version, "version", "v", "", "")
+	cmd.Flags().StringVarP(&gvr.Resource, "resource", "r", "", "")
+
 	cmd.Flags().StringVar(&kubeConfig, "kubeconfig", os.Getenv("KUBECONFIG"), "")
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", corev1.NamespaceAll, "")
+	cmd.Flags().StringVarP(&labelSelector, "label-selector", "l", "", "Label selector to filter resources")
+	cmd.Flags().StringVarP(&fieldSelector, "field-selector", "f", "", "Field selector to filter resources")
+
+	cmd.MarkFlagsRequiredTogether("group", "version", "resource")
 
 	if err := cmd.Execute(); err != nil {
 		fmt.Println(err)
