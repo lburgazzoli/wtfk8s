@@ -129,7 +129,7 @@ func main() {
 	cmd.Flags().BoolVar(&includeManagedFields, "include-managed-fields", true, "Include managed fields")
 	cmd.Flags().BoolVar(&includeStatus, "include-status", false, "Include status")
 
-	cmd.MarkFlagsRequiredTogether("group", "version", "resource")
+	cmd.MarkFlagsRequiredTogether("version", "resource")
 
 	if err := cmd.Execute(); err != nil {
 		fmt.Println(err)
